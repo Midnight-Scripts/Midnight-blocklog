@@ -1,6 +1,7 @@
 use clap::Parser;
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
+use std::io::Write;
 use std::{path::Path, time::Duration};
 use substrate_api_client::{
 	ac_primitives::{sr25519, DefaultRuntimeConfig},
@@ -14,35 +15,33 @@ use rusqlite::{params, Connection};
 use sp_runtime::generic::DigestItem;
 
 #[derive(Parser)]
-#[command(name = "mblog")]
+#[command(name = "mblog", version)]
 struct Args {
 	    #[arg(long, default_value = "ws://127.0.0.1:9944")]
 	    ws: String,
 	    /// Path to the node's keystore directory. The Aura public key is auto-detected from this.
 	    #[arg(long)]
 	    keystore_path: String,
-	    #[arg(long, default_value_t = 1200)]
-	    epoch_size: u32,
-	    #[arg(long)]
-	    epoch: Option<u32>,
-	    #[arg(long)]
-	    slots: Option<u32>,
-	    #[arg(long, default_value_t = 30)]
-	    watch_seconds: u64,
-	    /// Output timezone: "UTC", "local", fixed offset like "+09:00"/"-05:00",
-	    /// or an IANA zone like "Asia/Dubai" (Unix only; uses system tzdata via TZ env)
-	    #[arg(long, default_value = "UTC")]
-	    tz: String,
+		    #[arg(long, default_value_t = 1200)]
+		    epoch_size: u32,
+		    /// Output language for fixed messages: ja|en
+		    #[arg(long, value_enum, default_value = "en")]
+		    lang: Lang,
+		    /// Output timezone: "UTC", "local", fixed offset like "+09:00"/"-05:00",
+		    /// or an IANA zone like "Asia/Dubai" (Unix only; uses system tzdata via TZ env)
+		    #[arg(long, default_value = "UTC")]
+		    tz: String,
     /// Colorize output: auto|always|never
     #[arg(long, value_enum, default_value = "auto")]
-    color: ColorMode,
-    /// SQLite DB path
-    #[arg(long, default_value = "aura_schedule.sqlite")]
-    db: String,
+	    color: ColorMode,
+	    /// SQLite DB path
+	    #[arg(long, required_unless_present = "no_store")]
+	    db: Option<String>,
     /// Do not write to SQLite
     #[arg(long)]
     no_store: bool,
     #[arg(long)]
+    /// Enable continuous monitoring mode (run forever)
     watch: bool,
 }
 
@@ -51,6 +50,29 @@ enum ColorMode {
 	Auto,
 	Always,
 	Never,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+enum Lang {
+	Ja,
+	En,
+}
+
+struct I18n {
+	lang: Lang,
+}
+
+impl I18n {
+	fn new(lang: Lang) -> Self {
+		Self { lang }
+	}
+
+	fn pick<'a>(&self, en: &'a str, ja: &'a str) -> &'a str {
+		match self.lang {
+			Lang::En => en,
+			Lang::Ja => ja,
+		}
+	}
 }
 
 struct Colors {
@@ -92,6 +114,38 @@ impl Colors {
 	}
 	fn dim(&self, v: impl AsRef<str>) -> String {
 		self.wrap(v, "90") // bright black
+	}
+}
+
+fn render_progress_bar(percent: u8, width: usize) -> String {
+	let percent = percent.min(100) as usize;
+	let filled = (percent * width) / 100;
+	let empty = width.saturating_sub(filled);
+	format!("[{}{}]", "=".repeat(filled), " ".repeat(empty))
+}
+
+fn print_progress(
+	is_tty: bool,
+	colors: &Colors,
+	label: &str,
+	percent: u8,
+	current_slot: u64,
+	end_slot: u64,
+) {
+	let bar = render_progress_bar(percent, 30);
+	let line = format!(
+		"{label} {} {}% (slot {}/{})",
+		colors.dim(bar),
+		colors.epoch(percent.to_string()),
+		colors.range(current_slot.to_string()),
+		colors.range(end_slot.to_string())
+	);
+
+	if is_tty {
+		print!("\r\x1b[2K{line}");
+		let _ = std::io::stdout().flush();
+	} else {
+		println!("{line}");
 	}
 }
 
@@ -445,15 +499,28 @@ fn compute_my_slots(
 }
 
 fn main() -> anyhow::Result<()> {
-	    let args = Args::parse();
-		let colors = Colors::new(args.color);
-		let mut conn = if args.no_store {
-			None
-		} else {
-			let conn = Connection::open(&args.db)?;
-			ensure_db(&conn)?;
-			Some(conn)
-		};
+		    let args = Args::parse();
+		    let i18n = I18n::new(args.lang);
+				println!();
+				println!(
+					" Midnight-blocklog - {}: {}",
+					i18n.pick("Version", "バージョン"),
+					env!("CARGO_PKG_VERSION")
+				);
+				println!("--------------------------------------------------------------");
+				let colors = Colors::new(args.color);
+				let is_tty = std::io::stdout().is_terminal();
+				let mut conn = if args.no_store {
+					None
+				} else {
+				let db_path = args
+					.db
+					.as_ref()
+					.ok_or_else(|| anyhow!("--db is required unless --no-store is set"))?;
+				let conn = Connection::open(db_path)?;
+				ensure_db(&conn)?;
+				Some(conn)
+			};
 	let author_hex =
 		detect_aura_pubkey_from_keystore(Path::new(&args.keystore_path))?;
 	let author_bytes =
@@ -475,8 +542,6 @@ fn main() -> anyhow::Result<()> {
 	}
 
 	let epoch_size = args.epoch_size as u64;
-	let epoch_override = args.epoch.map(|e| e as u64);
-	let slots_override = args.slots.map(|s| s as u64);
 
 	let mut prev_hash: Option<[u8; 32]> = None;
 	let mut prev_len: usize = 0;
@@ -484,8 +549,22 @@ fn main() -> anyhow::Result<()> {
 	let mut prev_my_schedule_hash: Option<[u8; 32]> = None;
 	let mut prev_epoch: Option<u64> = None;
 	let mut printed_identity: bool = false;
-	let mut last_best_hash: Option<sp_core::H256> = None;
-	let mut last_finalized_number: u64 = 0;
+	let mut waiting_notice_printed: bool = false;
+	// Do not backfill from genesis on startup; initialize cursors from the current chain state.
+	let mut last_best_hash: Option<sp_core::H256> = api
+		.get_block_hash(None)
+		.map_err(|e| anyhow!("{e:?}"))?;
+	let mut last_finalized_number: u64 = match api
+		.get_finalized_head()
+		.map_err(|e| anyhow!("{e:?}"))?
+	{
+		Some(h) => api
+			.get_header(Some(h))
+			.map_err(|e| anyhow!("{e:?}"))?
+			.map(|hdr| hdr.number.into())
+			.unwrap_or(0),
+		None => 0,
+	};
 
 	loop {
 		let auths = fetch_authorities(&api)?;
@@ -497,10 +576,19 @@ fn main() -> anyhow::Result<()> {
 			|| prev_len != auths.len();
 
 		if changed {
-			if prev_hash.is_some() {
+			if is_tty && waiting_notice_printed {
 				println!();
-				println!("authority set changed (len {} -> {})", prev_len, auths.len());
 			}
+			waiting_notice_printed = false;
+				if prev_hash.is_some() {
+					println!(
+						"{} (len {} -> {})",
+						colors.epoch(i18n.pick("authority set changed", "Authorityセットが更新されました")),
+						prev_len,
+						auths.len()
+					);
+					println!();
+				}
 			prev_hash = Some(current_hash);
 			prev_len = auths.len();
 		}
@@ -525,22 +613,27 @@ fn main() -> anyhow::Result<()> {
 		let latest_slot = aura_slot_from_header(&best_header).unwrap_or_else(|| ts_ms / slot_dur_ms);
 		let best_number: u64 = best_header.number.into();
 
-			let epoch_idx = epoch_override.unwrap_or(latest_slot / epoch_size);
+			let epoch_idx = latest_slot / epoch_size;
 			let start_slot = epoch_idx * epoch_size;
-			let slots_to_scan = slots_override.unwrap_or(epoch_size);
-			let _end_slot = start_slot + slots_to_scan.saturating_sub(1);
-			let epoch_end_slot = start_slot + epoch_size.saturating_sub(1);
+				let slots_to_scan = epoch_size;
+				let epoch_end_slot = start_slot + epoch_size.saturating_sub(1);
 
-			let epoch_switched = prev_epoch.is_none() || prev_epoch.unwrap() != epoch_idx;
+				let epoch_switched = prev_epoch.is_none() || prev_epoch.unwrap() != epoch_idx;
 
-			if changed || epoch_switched {
-				println!();
-				println!(
-					"epoch={} / start_slot={} / end_slot={}",
-					colors.epoch(epoch_idx.to_string()),
-					colors.range(start_slot.to_string()),
-					colors.range(epoch_end_slot.to_string())
-				);
+					if changed || epoch_switched {
+						if is_tty && waiting_notice_printed {
+							println!();
+						}
+						waiting_notice_printed = false;
+							println!(
+								"{}:{} / {}:{} / {}:{}",
+								i18n.pick("epoch", "エポック"),
+								colors.epoch(epoch_idx.to_string()),
+								i18n.pick("start_slot", "開始スロット"),
+								colors.range(start_slot.to_string()),
+								i18n.pick("end_slot", "終了スロット"),
+								colors.range(epoch_end_slot.to_string())
+					);
 
 				if let Some(ref c) = conn {
 					db_upsert_epoch_info(c, epoch_idx, start_slot, epoch_end_slot, &current_hash_hex, auths.len())?;
@@ -553,33 +646,44 @@ fn main() -> anyhow::Result<()> {
 				println!();
 			}
 
+				// (progress is rendered in the waiting section, so it appears under the waiting line)
 		let author_present = author_in_authorities(&author_bytes, &auths);
 		let author_present_changed =
 			prev_author_present.is_none() || prev_author_present.unwrap() != author_present;
 		prev_author_present = Some(author_present);
 
 			if !author_present {
-				if changed || author_present_changed || prev_epoch.is_none() || prev_epoch.unwrap() != epoch_idx {
-					eprintln!(
-						"epoch={epoch_idx}, authorities={}; author not in current authorities; skip.",
-						auths.len()
-					);
-				}
+					if changed || author_present_changed || prev_epoch.is_none() || prev_epoch.unwrap() != epoch_idx {
+						eprintln!(
+							"epoch={epoch_idx}, authorities={}; {}",
+							auths.len(),
+							i18n.pick(
+								"author not in current authorities; skip.",
+								"author が現在の authorities に含まれていません; スキップします。",
+							)
+						);
+					}
 				prev_epoch = Some(epoch_idx);
 			} else {
 				let my_slots = compute_my_slots(&auths, &author_bytes, start_slot, slots_to_scan);
 				let my_hash = schedule_hash(&my_slots);
-				let my_changed = prev_my_schedule_hash.is_none() || prev_my_schedule_hash.unwrap() != my_hash;
-				let epoch_changed = epoch_switched;
+					let my_changed = prev_my_schedule_hash.is_none() || prev_my_schedule_hash.unwrap() != my_hash;
+					let epoch_changed = epoch_switched;
 
-				if my_changed || epoch_changed {
-					prev_my_schedule_hash = Some(my_hash);
-					prev_epoch = Some(epoch_idx);
+							if my_changed || epoch_changed {
+								if is_tty && waiting_notice_printed {
+									println!();
+								}
+								waiting_notice_printed = false;
+								prev_my_schedule_hash = Some(my_hash);
+								prev_epoch = Some(epoch_idx);
 
-					if let Some(ref mut c) = conn {
-						let planned: Vec<(u64, String)> = my_slots
-							.iter()
-							.map(|slot| {
+							let mut idx: usize = 0;
+
+						if let Some(ref mut c) = conn {
+							let planned: Vec<(u64, String)> = my_slots
+								.iter()
+								.map(|slot| {
 								let ts = ts_ms as i64
 									+ ((*slot as i64 - latest_slot as i64) * slot_dur_ms as i64);
 								(*slot, format_ts(ts, &utc_tz))
@@ -587,18 +691,24 @@ fn main() -> anyhow::Result<()> {
 							.collect();
 						db_insert_schedule(c, epoch_idx, &planned)?;
 					}
-
-					for slot in my_slots {
-						let ts = ts_ms as i64 + ((slot as i64 - latest_slot as i64) * slot_dur_ms as i64);
+						println!(
+							"{}",
+							i18n.pick("Your Block Schedule List", "あなたのブロック生成スケジュール")
+						);
+						println!("-------------------------");
+					for slot in &my_slots {
+						idx += 1;
+						let ts = ts_ms as i64 + ((*slot as i64 - latest_slot as i64) * slot_dur_ms as i64);
 						let out_ts = colors.time(format_ts(ts, &out_tz));
 						let utc_ts = format_ts(ts, &utc_tz);
 						println!(
-							"slot {}: {} (UTC {})",
+							"#{idx} slot {}: {} (UTC {})",
 							colors.slot(slot.to_string()),
 							out_ts,
 							colors.dim(utc_ts)
 						);
 					}
+					println!("{}={}", i18n.pick("Total", "合計"), my_slots.len());
 				}
 			}
 
@@ -670,27 +780,50 @@ fn main() -> anyhow::Result<()> {
 				}
 			}
 
-		if !args.watch {
-			break;
-		}
-		// If authority set changes only at epoch boundary, sleep until near the next boundary.
-		// We still cap the sleep to `watch_seconds` to stay responsive if the node is stalled.
-		let sleep_secs = if epoch_override.is_some() {
-			args.watch_seconds
-		} else {
-			let next_epoch_start_slot = (epoch_idx + 1) * epoch_size;
-			let delta_slots = next_epoch_start_slot.saturating_sub(latest_slot).max(1);
-			let delta_ms = delta_slots.saturating_mul(slot_dur_ms);
-			let cap_ms = args.watch_seconds.saturating_mul(1000);
-			if delta_ms > cap_ms {
-				args.watch_seconds
-			} else {
-				// Wake slightly after the theoretical boundary to re-check.
-				((delta_ms / 1000) + 1).max(1)
+			if !args.watch {
+				break;
 			}
-		};
-		std::thread::sleep(Duration::from_secs(sleep_secs));
-	}
+				let next_epoch_start_slot = (epoch_idx + 1) * epoch_size;
+				let delta_slots = next_epoch_start_slot.saturating_sub(latest_slot).max(1);
+				let delta_ms = delta_slots.saturating_mul(slot_dur_ms);
+				let remaining_secs = (delta_ms / 1000).max(1);
+
+					if !waiting_notice_printed {
+						waiting_notice_printed = true;
+						println!();
+						println!(
+							"{} (next_epoch={})",
+							i18n.pick("Waiting for next session...", "次のセッション待ち..."),
+							epoch_idx + 1
+						);
+					}
+
+				// Avoid sleeping for very long periods so we can still react if the node stalls.
+				let sleep_secs = remaining_secs.min(600).max(1);
+				if is_tty {
+					// Update progress line in realtime without extra RPC calls.
+					let slot_dur_ms = slot_dur_ms.max(1);
+					for elapsed in 0..sleep_secs {
+						let est_slot = latest_slot.saturating_add((elapsed * 1000) / slot_dur_ms);
+						let cur = est_slot.saturating_sub(start_slot);
+						let denom = epoch_size.max(1);
+						let pct = ((cur.saturating_mul(100)) / denom).min(100) as u8;
+						// Always redraw once per second so the current slot display advances even if the percentage doesn't.
+							print_progress(
+								true,
+								&colors,
+								i18n.pick("progress", "進捗"),
+								pct,
+								est_slot,
+								epoch_end_slot,
+							);
+							std::thread::sleep(Duration::from_secs(1));
+						}
+				} else {
+					// Non-TTY: keep logs clean, and avoid extra CPU usage.
+					std::thread::sleep(Duration::from_secs(sleep_secs));
+				}
+			}
 
     Ok(())
 }

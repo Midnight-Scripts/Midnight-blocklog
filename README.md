@@ -1,32 +1,28 @@
-# Midnight-Blocklog
+# Midnight-blocklog
 
-Aura schedule + block production logger for a Midnight (Substrate) node.
+Midnightノード向けの **Aura ブロック生成スケジュール表示 + SQLite 記録** ツールです。
 
-Features:
-- Computes your Aura slots for the current epoch (session) and stores them in SQLite
-- Watches the chain and updates slot status:
-  - `schedule` (planned)
-  - `mint` (seen on best head)
-  - `finality` (seen finalized)
-- Stores per-epoch authority set metadata
-- Timezone conversion + optional color output
+このツールは、ノードの keystore から **Aura 公開鍵を自動検出**し、`author_hasKey` で **このノードが秘密鍵を保持していること**を確認したうえで、現在セッション（ここでは便宜上「epoch」と表記）の担当スロットを計算して記録します。
 
-## Requirements
+## できること
 
-- A running `midnight-node` with WS RPC enabled (e.g. `--unsafe-rpc-external` `--rpc-methods=Unsafe` `--rpc-port 9944`)
+- 現在 epoch（session）の **自分の Aura 担当スロット**を計算して表示・SQLite に `schedule` として保存
+- 監視モード（`--watch`）でチェーンを追跡し状態を更新。次のセッションまで待機し境界で新しい epoch の担当スロットを計算・保存します。
+  - `schedule`（予定）
+  - `mint`（best head で観測）
+  - `finality`（finalized で観測）
+- epoch ごとに Authority セット情報を保存（ハッシュ/長さ、開始/終了スロットなど）
+- 出力タイムゾーン指定、色付き出力（TTY 自動判定）
 
-## Build dependencies (Linux)
+## 動作要件
 
-`mblog` uses `rusqlite` with the `bundled` feature, so you do not need a system `libsqlite3`. You do need a C toolchain.
+- `midnight-node`の起動オプションに以下のフラグを追加（WS RPC 有効
+  `--rpc-methods=Unsafe`
+  `--unsafe-rpc-external`
+  `--rpc-port 9944`
+- Rust（`cargo`）ビルド環境
 
-Ubuntu/Debian:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libssl-dev
-```
-
-## Install Rust (rustup)
+## Rust のインストール（rustup）
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -37,124 +33,113 @@ rustc -V
 cargo -V
 ```
 
-
-## Build
+## ビルド依存（Linux）
+Ubuntu/Debian:
 
 ```bash
-cargo build --bin mblog
+sudo apt-get update
+sudo apt-get install -y build-essential pkg-config libssl-dev
 ```
 
-## Run
+## インストール（このリポジトリを clone して `cargo install`）
 
 ```bash
-./target/debug/mblog \
+git clone https://github.com/btbf/Midnight-blocklog.git
+cd Midnight-blocklog
+cargo install --path . --bin mblog --locked --force
+```
+
+インストール後、`mblog` は通常 `~/.cargo/bin/mblog` に配置されます。
+
+## 使い方
+
+### 1) ヘルプ表示
+
+```bash
+mblog --help
+```
+
+出力（実際の `--help`）:
+
+```text
+Usage: mblog [OPTIONS] --keystore-path <KEYSTORE_PATH>
+
+Options:
+      --ws <WS>                        [default: ws://127.0.0.1:9944]
+      --keystore-path <KEYSTORE_PATH>  Path to the node's keystore directory. The Aura public key is auto-detected from this
+      --epoch-size <EPOCH_SIZE>        [default: 1200]
+      --lang <LANG>                    Output language for fixed messages: ja|en [default: en] [possible values: ja, en]
+      --tz <TZ>                        Output timezone: "UTC", "local", fixed offset like "+09:00"/"-05:00", or an IANA zone like "Asia/Dubai" (Unix only; uses system tzdata via TZ env) [default: UTC]
+      --color <COLOR>                  Colorize output: auto|always|never [default: auto] [possible values: auto, always, never]
+      --db <DB>                        SQLite DB path [default: mblog.sqlite]
+      --no-store                       Do not write to SQLite
+      --watch                          Enable continuous monitoring mode (run forever)
+  -h, --help                           Print help
+  -V, --version                        Print version
+```
+
+### 2) DB保存、表示タイムゾーン、監視モード
+
+`--db`は必ず指定し一度作成したら同じパスを使い続けてください。
+
+```bash
+cd /path/to/Midnight-dir
+mblog \
   --keystore-path /path/to/your/keystore \
-  --watch \
-  --tz Asia/Dubai \
-  --db aura_schedule.sqlite
+  --db /path/to/midnight-dir/mblog.sqlite \
+  --tz Asia/Tokyo \
+  --watch
 ```
 
-Common options:
-- `--ws ws://...` (Midnight node WS RPC endpoint; default: ws://127.0.0.1:9944)
-- `--keystore-path` (/path/to/keystore: required)
-- `--epoch-size N` (number of slots per epoch; default: 1200)
-- `--watch` (enable chain watching mode; default: off)
-- `--tz TIMEZONE` (timezone for output times; default: UTC) Timezone fomat type `UTC`|`local`|`+09:00`|`-05:00`|`Area/City`
-- `--color auto|always|never` (output color mode; default: auto)
-- `--no-store` (print only; no SQLite writes)
+## オプション
 
-## SQLite schema
+`--ws` は省略可能です（デフォルト: `ws://127.0.0.1:9944`）。
 
-### Epoch info (`epoch_info`)
-- `epoch`
-- `start_slot`
-- `end_slot`
-- `authority_set_hash`
-- `authority_set_len`
-- `created_at_utc`
+- `--ws <WS>`: WS RPC エンドポイント（省略可）
+- `--keystore-path <KEYSTORE_PATH>`: ノード keystore ディレクトリ（必須）
+- `--epoch-size <EPOCH_SIZE>`: 1 epoch あたりのスロット数（デフォルト: `1200`）
+- `--lang <LANG>`: 固定メッセージの言語（`ja` | `en`、デフォルト: `en`）
+- `--tz <TZ>`: 出力タイムゾーン（デフォルト: `UTC`）
+  - `UTC` / `local` / `+HH:MM` / `-HH:MM`
+  - Unix のみ: `Asia/Tokyo` のような IANA タイムゾーン（内部で `TZ` を設定し、システムの tzdata を利用）
+- `--color <auto|always|never>`: 色付き出力（デフォルト: `auto`）
+- `--db <DB>`: SQLite DB パス（必須）
+- `--no-store`: SQLite に書き込まない（ログ表示のみ。`--db`パス不要）
+- `--watch`: 常時監視（終了せずに動作し続ける）
 
-### Block slots (`blocks`)
-- `slot` (primary key)
-- `epoch`
-- `planned_time_utc`
-- `block_number` (nullable)
-- `block_hash` (nullable)
-- `produced_time_utc` (nullable)
-- `status` (`schedule` | `mint` | `finality`)
+## SQLite に保存する内容
+SQLiteに格納されるデータは、当アプリケーションを`--watch`オプション付きで実行することで継続的に更新されます。
 
-## Security
+### epoch 情報（`epoch_info`）
 
-- This tool never reads or prints secret keys.
-- `author_hasKey` is a local-node check: it confirms the keystore contains the secret key for the detected public key.
-
----
-
-# Midnight-Blocklog（日本語）
-
-Midnight（Substrate）ノード向けの **Aura スケジュール算出 + ブロック生成ログ（SQLite 記録）** ツールです。
-
-主な機能:
-- 現在エポック（セッション）の **自分の担当スロット**を計算し、SQLite に `schedule` として記録
-- チェーンを監視し、スロットの状態を更新:
-  - `schedule`（予定）
-  - `mint`（best head で観測）
-  - `finality`（finalized で観測）
-- エポックごとの authority set 情報を SQLite に記録
-- タイムゾーン変換、色付き表示に対応
-
-## 必要条件
-
-- `midnight-node` が起動しており、WS RPC が有効（例: `--rpc-port 9944`）
-- `midnight-node` 起動時に必要なオプション `--unsafe-rpc-external` `--rpc-methods=Unsafe`
-
-## ビルド
-
-```bash
-cargo build --bin mblog
-```
-
-## 実行
-
-```bash
-./target/debug/mblog \
-  --keystore-path /path/to/your/keystore \
-  --watch \
-  --tz Asia/Dubai \
-  --db aura_schedule.sqlite
-```
-
-主なオプション:
-- `--ws ws://...`（Midnight ノードの WS RPC エンドポイント、デフォルト: ws://127.0.0.1:9944）
-- `--keystore-path /path/to/keystore`（keystore のパス、必須）
-- `--epoch-size N`（エポックあたりのスロット数、デフォルト: 1200）
-- `--watch`（チェーン監視モードを有効にする、デフォルト: 無効）
-- `--tz TIMEZONE` (timezone for output times; default: UTC)  タイムゾーン形式タイプ `UTC`|`local`|`+09:00`|`-05:00`|`Area/City`
-- `--color auto|always|never` （出力の色付きモード、デフォルト: auto）
-- `--no-store`（SQLite記録無効。表示のみ）
-
-## SQLite スキーマ
-
-### エポック情報（`epoch_info`）
-- `epoch`（エポック番号）
-- `start_slot`（開始スロット）
-- `end_slot`（終了スロット）
-- `authority_set_hash`
-- `authority_set_len`
-- `created_at_utc`
+- `epoch`: エポック番号
+- `start_slot`: 開始スロット
+- `end_slot`: 終了スロット
+- `authority_set_hash`: Authority セットのハッシュ
+- `authority_set_len`: Authority セットの要素数
+- `created_at_utc`: 記録時刻（UTC）
 
 ### ブロック情報（`blocks`）
+
 - `slot`（主キー）
 - `epoch`
-- `planned_time_utc`（予定時刻）
-- `block_number`（任意）
-- `block_hash`（任意）
-- `produced_time_utc`（任意）
-- `status`（`schedule` | `mint` | `finality`）
-
-## 補足 / 注意書き
-- 起動時に `author_hasKey` を確認し、このノードの keystore に秘密鍵が無い場合は起動しません。
+- `planned_time_utc`: ブロック生成予定時刻（UTC）
+- `block_number`
+- `block_hash`
+- `produced_time_utc`
+- `status`: `schedule` / `mint` / `finality`
 
 ## セキュリティ
 
-- 秘密鍵は読み取りません・表示しません。
-- `author_hasKey` は「ローカルノードが秘密鍵を持っているか」の確認です。
+- このツールは秘密鍵を読み取りません・表示しません（keystore のファイル名から公開鍵を検出します）。
+- `author_hasKey` は「このノードの keystore に該当する秘密鍵があるか」を確認する RPC です。
+
+
+## 今後の予定
+- ブロック生成実績一覧の表示機能（エポックごと）
+- UX改善（リクエストがあればissueを提出してください）
+
+## ライセンス
+Apache-2.0
+
+Copyright (c) 2026 BTBF (X-StakePool)
