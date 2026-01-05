@@ -1,0 +1,17 @@
+[package]
+name = "block-check"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = { version = "0.4.42", features = ["clock"] }
+clap = { version = "4.5.54", features = ["derive"] }
+futures-util = "0.3.31"
+hex = "0.4.3"
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+sha2 = "0.10.9"
+sp-core = "39.0.0"
+sp-runtime = "44.0.0"
+substrate-api-client = { version = "1.20.0", default-features = false, features = ["tungstenite-client", "std", "sync-api"] }
+tokio = { version = "1.49.0", features = ["rt-multi-thread", "macros"] }
