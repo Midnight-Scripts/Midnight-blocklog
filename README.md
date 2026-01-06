@@ -80,7 +80,7 @@ Options:
   -V, --version                        Print version
 ```
 
-### 2) Save to DB, set output timezone, and enable watch mode
+### 2) Schedule DB Save, Display Time Zone, Enable Monitoring Mode
 
 ```bash
 mblog \
@@ -228,7 +228,7 @@ mblog --help
   -V, --version                        バージョンを表示
 ```
 
-### 2) DB保存、表示タイムゾーン、監視モード
+### 2) スケジュールDB保存、表示タイムゾーン、監視モード有効化
 
 ```bash
 mblog \
