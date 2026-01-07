@@ -48,6 +48,7 @@ sudo apt-get install -y build-essential pkg-config libssl-dev
 ```bash
 git clone https://github.com/btbf/Midnight-blocklog.git
 cd Midnight-blocklog
+git checkout <latest_tag_name>
 cargo install --path . --bin mblog --locked --force
 ```
 
@@ -246,6 +247,7 @@ sudo apt-get install -y build-essential pkg-config libssl-dev
 ```bash
 git clone https://github.com/btbf/Midnight-blocklog.git
 cd Midnight-blocklog
+git checkout <latest_tag_name>
 cargo install --path . --bin mblog --locked --force
 ```
 
