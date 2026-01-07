@@ -9,7 +9,7 @@ This tool **auto-detects the Aura public key** from the node keystore, verifies 
 ## What it does
 
 - Calculates your **assigned Aura slots** in the current epoch (session), displays them, and stores them in SQLite as `schedule`
-- In watch mode (`--watch`), tracks the chain and updates the status. It waits until the next session, and at the boundary it calculates and stores the assigned slots for the new epoch.
+- In watch mode (`mblog block --watch`), tracks the chain and updates the status. It waits until the next session, and at the boundary it calculates and stores the assigned slots for the new epoch.
   - `schedule` (planned)
   - `mint` (observed on best head)
   - `finality` (observed on finalized)
@@ -64,26 +64,17 @@ mblog --help
 Output (actual `--help`):
 
 ```text
-Usage: mblog [OPTIONS] --keystore-path <KEYSTORE_PATH>
+Usage: mblog <COMMAND>
 
-Options:
-      --ws <WS>                        [default: ws://127.0.0.1:9944]
-      --keystore-path <KEYSTORE_PATH>  Path to the node's keystore directory. The Aura public key is auto-detected from this
-      --epoch-size <EPOCH_SIZE>        [default: 1200]
-      --lang <LANG>                    Output language for fixed messages: ja|en [default: en] [possible values: ja, en]
-      --tz <TZ>                        Output timezone: "UTC", "local", fixed offset like "+09:00"/"-05:00", or an IANA zone like "Asia/Dubai" (Unix only; uses system tzdata via TZ env) [default: UTC]
-      --color <COLOR>                  Colorize output: auto|always|never [default: auto] [possible values: auto, always, never]
-      --db <DB>                        SQLite DB path [default: ./mblog.db]
-      --no-store                       Do not write to SQLite
-      --watch                          Enable continuous monitoring mode (run forever)
-  -h, --help                           Print help
-  -V, --version                        Print version
+Commands:
+  block  Show Aura slot schedule (use --watch to monitor)
+  log    Show stored blocks from SQLite
 ```
 
 ### 2) Schedule DB Save, Display Time Zone, Enable Monitoring Mode
 
 ```bash
-mblog \
+mblog block \
   --keystore-path /path/to/your/keystore \
   --db /path/to/midnight-dir/mblog.db \
   --tz Asia/Tokyo \
@@ -92,22 +83,53 @@ mblog \
 
 Example results (may vary depending on time zone settings)
 ```
- Midnight-blocklog - Version: 0.3.0
+ Midnight-blocklog - Version: 0.3.1
 --------------------------------------------------------------
-epoch:245508 / start_slot:294609600 / end_slot:294610799
-author=0x52cc8d7dbb573b0fa3ba8e12545affa48313c3e5e0dc0b07515fd52419373360
+epoch:245527 (start_slot:294632400 / end_slot:294633599)
+      author: 0x52cc8d7dbb573b0fa3ba8e12545affa48313c3e5e0dc0b07515fd52419373360
+   ADA Stake: 2816841.654532 ADA (2816841654532 lovelace)
+Registration: true (Registered)
 
 Your Block Schedule List
 -------------------------
-#1 slot 294609854: 2026-01-06T04:25:24+04:00 (UTC 2026-01-06T00:25:24+00:00)
+#1 slot 294633422: 2026-01-07T19:42:12+04:00 (UTC 2026-01-07T15:42:12+00:00)
 Total=1
 
-Waiting for next session... (next_epoch=245509)
-progress [==============                ] 47% (slot 294610168/294610799)
+Waiting for next session... (next_epoch=245528)
+progress [============================= ] 99% (slot 294633599/294633599)
 ```
 >If there is no schedule, it will display `No schedule for this session`.
 
+
+### 3) Show stored blocks (SQLite)
+
+```bash
+# Latest epoch (default)
+mblog log --db /path/to/midnight-dir/mblog.db
+
+# Specific epoch
+mblog log --db /path/to/midnight-dir/mblog.db --epoch 245525
+```
+
+Example results (may vary depending on time zone settings)
+```
+Midnight Block Log
+-------------------
+
+epoch: 245528
+|===|==========|==============|===========|===============|===========================|=======================|
+| # | status   | block_number | slot      | slot_in_epoch | Scheduled_time            | block_hash            |
+|===|==========|==============|===========|===============|===========================|=======================|
+| 1 | finality | 3238956      | 294633833 | 233           | 2026-01-07T20:23:18+04:00 | 0xec7a91ac...81f5d053 |
+| 2 | finality | 3238966      | 294633843 | 243           | 2026-01-07T20:24:18+04:00 | 0x63ec2189...c0776574 |
+|===|==========|==============|===========|===============|===========================|=======================|
+```
+
 ## Options
+
+Options are provided per subcommand.
+
+### `mblog block`
 
 - `--ws <WS>`: WS RPC endpoint (optional; default: `ws://127.0.0.1:9944`)
 - `--keystore-path <KEYSTORE_PATH>`: Node keystore directory (required)
@@ -119,10 +141,21 @@ progress [==============                ] 47% (slot 294610168/294610799)
 - `--color <auto|always|never>`: Colored output (optional; default: `auto`)
 - `--db <DB>`: SQLite DB path (optional; default: `./mblog.db`)
 - `--no-store`: Do not write to SQLite (optional; logs only; `--db` path is not required)
+- `--ariadne-endpoint <ARIADNE_ENDPOINT>`: Ariadne JSON-RPC endpoint used for sidechain registration checks (optional; default: `https://rpc.testnet-02.midnight.network`)
+- `--ariadne-insecure`: Accept invalid TLS certs for Ariadne endpoint (optional)
+- `--no-registration-check`: Disable sidechain registration check (optional)
 - `--watch`: Continuous monitoring (optional; keeps running without exiting)
 
+### `mblog log`
+
+- `--db <DB>`: SQLite DB path (optional; default: `./mblog.db`)
+- `--epoch <EPOCH>`: Epoch number to display (optional; default: latest)
+- `--tz <TZ>`: Scheduled time timezone (optional; default: `UTC`)
+
+See `mblog block --help` and `mblog log --help` for the authoritative list.
+
 ## What is stored in SQLite
-The data stored in SQLite is continuously updated by running this application with the `--watch` option.
+The data stored in SQLite is continuously updated by running this application with `mblog watch`.
 
 On the first run, an SQLite database is created at the `--db` path you specify, and data is accumulated in the following tables. Please note that if you change the path or omit it, a new database will be created.
 
@@ -152,7 +185,7 @@ On the first run, an SQLite database is created at the `--db` path you specify, 
 
 
 ## Roadmap
-- Display functionality for block production results (per epoch)
+- Indexer Integration
 - UX improvements (please open an issue if you have a request)
 
 ## License
@@ -174,7 +207,7 @@ Midnightノード向けの **Aura ブロック生成スケジュール表示 + S
 ## できること
 
 - 現在 epoch（session）の **自分の Aura 担当スロット**を計算して表示・SQLite に `schedule` として保存
-- 監視モード（`--watch`）でチェーンを追跡し状態を更新。次のセッションまで待機し境界で新しい epoch の担当スロットを計算・保存します。
+- 監視モード（`mblog block --watch`）でチェーンを追跡し状態を更新。次のセッションまで待機し境界で新しい epoch の担当スロットを計算・保存します。
   - `schedule`（予定）
   - `mint`（best head で観測）
   - `finality`（finalized で観測）
@@ -229,51 +262,18 @@ mblog --help
 出力（実際の `--help`）:
 
 ```text
-使用方法: mblog [OPTIONS] --keystore-path <KEYSTORE_PATH>
+使用方法: mblog <COMMAND>
 
-オプション:
-      --ws <WS>                        [デフォルト: ws://127.0.0.1:9944]
-      --keystore-path <KEYSTORE_PATH>  ノードのkeystoreディレクトリのパス。Aura公開鍵はここから自動検出されます
-      --epoch-size <EPOCH_SIZE>        [デフォルト: 1200]
-      --lang <LANG>                    固定メッセージの出力言語: ja|en [デフォルト: en] [指定可能な値: ja, en]
-      --tz <TZ>                        出力タイムゾーン: "UTC"、"local"、"+09:00"/"-05:00"のような固定オフセット、または"Asia/Dubai"のようなIANAゾーン（Unixのみ; TZ環境変数経由でシステムのtzdataを使用） [デフォルト: UTC]
-      --color <COLOR>                  出力のカラー化: auto|always|never [デフォルト: auto] [指定可能な値: auto, always, never]
-      --db <DB>                        SQLite DBパス [デフォルト: ./mblog.db]
-      --no-store                       SQLiteに書き込まない
-      --watch                          継続監視モードを有効化（永続的に実行）
-  -h, --help                           ヘルプを表示
-  -V, --version                        バージョンを表示
+コマンド:
+  block  スロットスケジュール表示（`--watch` で継続監視）
+  log    SQLite の blocks 表示
 ```
-
-### 2) スケジュールDB保存、表示タイムゾーン、監視モード有効化
-
-```bash
-mblog \
-  --keystore-path /path/to/your/keystore \
-  --db /path/to/midnight-dir/mblog.db \
-  --tz Asia/Tokyo \
-  --watch
-```
-
-結果の例（タイムゾーン設定により異なります）:
-```
- Midnight-blocklog - Version: 0.3.0
---------------------------------------------------------------
-epoch:245508 / start_slot:294609600 / end_slot:294610799
-author=0x52cc8d7dbb573b0fa3ba8e12545affa48313c3e5e0dc0b07515fd52419373360
-
-Your Block Schedule List
--------------------------
-#1 slot 294609854: 2026-01-06T04:25:24+04:00 (UTC 2026-01-06T00:25:24+00:00)
-Total=1
-
-Waiting for next session... (next_epoch=245509)
-progress [==============                ] 47% (slot 294610168/294610799)
-```
-> スケジュールがない場合は `このセッションにスケジュールはありません`と表示されます。
-
 
 ## オプション
+
+サブコマンドごとにオプションが異なります。
+
+### `mblog block`
 
 - `--ws <WS>`: WS RPC エンドポイント（省略可能、デフォルト: `ws://127.0.0.1:9944`）
 - `--keystore-path <KEYSTORE_PATH>`: ノード keystore ディレクトリ（必須）
@@ -284,11 +284,78 @@ progress [==============                ] 47% (slot 294610168/294610799)
   - Unix のみ: `Asia/Tokyo` のような IANA タイムゾーン（内部で `TZ` を設定し、システムの tzdata を利用）
 - `--color <auto|always|never>`: 色付き出力（省略可能、デフォルト: `auto`）
 - `--db <DB>`: SQLite DB パス（省略可能、デフォルト: `./mblog.db`）
-- `--no-store`: SQLite に書き込まない（省略可能、ログ表示のみ。`--db`パス不要）
+- `--no-store`: SQLite に書き込まない（省略可能、ログ表示のみ。`--db` パス不要）
+- `--ariadne-endpoint <ARIADNE_ENDPOINT>`: サイドチェーン登録チェックに使用する Ariadne JSON-RPC エンドポイント（省略可能、デフォルト: `https://rpc.testnet-02.midnight.network`）
+- `--ariadne-insecure`: Ariadne の TLS 証明書検証をスキップ（自己署名向け; 省略可能）
+- `--no-registration-check`: サイドチェーン登録チェックを無効化（省略可能）
 - `--watch`: 常時監視（省略可能、終了せずに動作し続ける）
 
+### `mblog log`
+
+- `--db <DB>`: SQLite DB パス（省略可能、デフォルト: `./mblog.db`）
+- `--epoch <EPOCH>`: 表示する epoch（省略可能、デフォルト: 最新）
+- `--tz <TZ>`: Scheduled time の表示タイムゾーン（省略可能、デフォルト: `UTC`）
+
+詳細・最新の一覧は `mblog block --help` と `mblog log --help` を参照してください。
+
+
+### 2) スケジュールDB保存、表示タイムゾーン、監視モード有効化
+
+```bash
+mblog block \
+  --keystore-path /path/to/your/keystore \
+  --db /path/to/midnight-dir/mblog.db \
+  --tz Asia/Tokyo \
+  --watch
+```
+
+結果の例（タイムゾーン設定により異なります）:
+```
+ Midnight-blocklog - Version: 0.3.1
+--------------------------------------------------------------
+epoch:245527 (start_slot:294632400 / end_slot:294633599)
+      author: 0x52cc8d7dbb573b0fa3ba8e12545affa48313c3e5e0dc0b07515fd52419373360
+   ADA Stake: 2816841.654532 ADA (2816841654532 lovelace)
+Registration: true (Registered)
+
+Your Block Schedule List
+-------------------------
+#1 slot 294633422: 2026-01-07T19:42:12+04:00 (UTC 2026-01-07T15:42:12+00:00)
+Total=1
+
+Waiting for next session... (next_epoch=245528)
+progress [============================= ] 99% (slot 294633599/294633599)
+```
+> スケジュールがない場合は `このセッションにスケジュールはありません`と表示されます。
+
+
+### 3) blocks 表示（SQLite）
+
+```bash
+# 最新の epoch（デフォルト）
+mblog log --db /path/to/midnight-dir/mblog.db
+
+# epoch 指定
+mblog log --db /path/to/midnight-dir/mblog.db --epoch 245525
+```
+
+結果の例（タイムゾーン設定により異なります）:
+```
+Midnight Block Log
+-------------------
+
+epoch: 245528
+|===|==========|==============|===========|===============|===========================|=======================|
+| # | status   | block_number | slot      | slot_in_epoch | Scheduled_time            | block_hash            |
+|===|==========|==============|===========|===============|===========================|=======================|
+| 1 | finality | 3238956      | 294633833 | 233           | 2026-01-07T20:23:18+04:00 | 0xec7a91ac...81f5d053 |
+| 2 | finality | 3238966      | 294633843 | 243           | 2026-01-07T20:24:18+04:00 | 0x63ec2189...c0776574 |
+|===|==========|==============|===========|===============|===========================|=======================|
+```
+
+
 ## SQLite に保存する内容
-SQLiteに格納されるデータは、当アプリケーションを`--watch`オプション付きで実行することで継続的に更新されます。
+SQLiteに格納されるデータは、当アプリケーションを `mblog block --watch` で実行することで継続的に更新されます。
 
 初回起動時に指定した `--db` パスに SQLite データベースが作成され、以下のテーブルにデータを蓄積します。パス変更や省略した場合は新しいdatabaseが作成されるのでご注意ください。
 
@@ -318,7 +385,7 @@ SQLiteに格納されるデータは、当アプリケーションを`--watch`�
 
 
 ## 今後の予定
-- ブロック生成実績一覧の表示機能（エポックごと）
+- インデクサー連携
 - UX改善（リクエストがあればissueを提出してください）
 
 ## ライセンス
