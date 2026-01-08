@@ -13,6 +13,7 @@ use anyhow::anyhow;
 use chrono::{FixedOffset, Local, Utc};
 use rusqlite::{params, Connection};
 use serde_json::Value;
+use sp_core::crypto::{AccountId32, KeyTypeId};
 use sp_runtime::generic::DigestItem;
 use unicode_width::UnicodeWidthStr;
 
@@ -69,6 +70,10 @@ struct CommonArgs {
 	/// Continuously monitor (run forever)
 	#[arg(long)]
 	watch: bool,
+
+	/// Print metadata / storage availability diagnostics for Session-related items
+	#[arg(long, hide = true)]
+	debug_metadata: bool,
 }
 
 #[derive(Args)]
@@ -558,6 +563,104 @@ fn fetch_authorities(
 	Ok(res.unwrap_or_default())
 }
 
+fn format_meta_check(res: Result<(), anyhow::Error>) -> String {
+	match res {
+		Ok(()) => "ok".to_string(),
+		Err(e) => format!("err: {e}"),
+	}
+}
+
+fn debug_session_metadata(
+	api: &Api<DefaultRuntimeConfig, TungsteniteRpcClient>,
+	author_bytes: &[u8; 32],
+) -> Vec<(String, String)> {
+	let mut rows = Vec::new();
+
+	rows.push((
+		"meta Session pallet".to_string(),
+		if api.metadata().pallet_by_name("Session").is_some() {
+			"present".to_string()
+		} else {
+			"missing".to_string()
+		},
+	));
+
+	let check = |pallet: &'static str, item: &'static str| -> Result<(), anyhow::Error> {
+		api.metadata()
+			.storage_value_key(pallet, item)
+			.map(|_| ())
+			.map_err(|e| anyhow!("{e:?}"))
+	};
+	let check_map = |pallet: &'static str, item: &'static str| -> Result<(), anyhow::Error> {
+		api.metadata()
+			.storage_map_key_prefix(pallet, item)
+			.map(|_| ())
+			.map_err(|e| anyhow!("{e:?}"))
+	};
+	let check_double_prefix =
+		|pallet: &'static str, item: &'static str, first: KeyTypeId| -> Result<(), anyhow::Error> {
+			api.metadata()
+				.storage_double_map_key_prefix(pallet, item, first)
+				.map(|_| ())
+				.map_err(|e| anyhow!("{e:?}"))
+		};
+
+	rows.push((
+		"meta Session.Validators".to_string(),
+		format_meta_check(check("Session", "Validators")),
+	));
+	rows.push((
+		"meta Session.QueuedValidators".to_string(),
+		format_meta_check(check("Session", "QueuedValidators")),
+	));
+	rows.push((
+		"meta Session.QueuedKeys".to_string(),
+		format_meta_check(check("Session", "QueuedKeys")),
+	));
+	rows.push((
+		"meta Session.NextKeys(map)".to_string(),
+		format_meta_check(check_map("Session", "NextKeys")),
+	));
+	rows.push((
+		"meta Session.KeyOwner(dbl)".to_string(),
+		format_meta_check(check_double_prefix("Session", "KeyOwner", KeyTypeId(*b"aura"))),
+	));
+
+	// State checks (do not swallow errors)
+	match api.get_storage::<Vec<AccountId32>>("Session", "Validators", None) {
+		Ok(Some(vs)) => rows.push(("state Session.Validators".to_string(), format!("len={}", vs.len()))),
+		Ok(None) => rows.push(("state Session.Validators".to_string(), "null".to_string())),
+		Err(e) => rows.push(("state Session.Validators".to_string(), format!("err: {e:?}"))),
+	}
+	match api.get_storage::<Vec<AccountId32>>("Session", "QueuedValidators", None) {
+		Ok(Some(vs)) => rows.push((
+			"state Session.QueuedValidators".to_string(),
+			format!("len={}", vs.len()),
+		)),
+		Ok(None) => rows.push(("state Session.QueuedValidators".to_string(), "null".to_string())),
+		Err(e) => rows.push(("state Session.QueuedValidators".to_string(), format!("err: {e:?}"))),
+	}
+
+	let key_type = KeyTypeId(*b"aura");
+	let pubkey = author_bytes.to_vec();
+	match api.get_storage_double_map::<KeyTypeId, Vec<u8>, AccountId32>("Session", "KeyOwner", key_type, pubkey, None)
+	{
+		Ok(Some(a)) => rows.push(("state Session.KeyOwner(aura)".to_string(), hex_account_id32(&a))),
+		Ok(None) => rows.push(("state Session.KeyOwner(aura)".to_string(), "null".to_string())),
+		Err(e) => rows.push(("state Session.KeyOwner(aura)".to_string(), format!("err: {e:?}"))),
+	}
+
+	rows
+}
+
+fn account_id32_bytes(a: &AccountId32) -> &[u8] {
+	<AccountId32 as AsRef<[u8]>>::as_ref(a)
+}
+
+fn hex_account_id32(a: &AccountId32) -> String {
+	format!("0x{}", hex::encode(account_id32_bytes(a)))
+}
+
 fn hash_authorities(auths: &[sr25519::Public]) -> [u8; 32] {
 	let mut hasher = Sha256::new();
 	for a in auths {
@@ -944,6 +1047,15 @@ fn run(common: CommonArgs) -> anyhow::Result<()> {
 		None => 0,
 	};
 
+	if common.debug_metadata {
+		println!();
+		println!("Session metadata / state diagnostics");
+		println!("----------------------------------");
+		let rows = debug_session_metadata(&api, &author_bytes);
+		print_kv_table(&rows);
+		println!();
+	}
+
 	loop {
 		let auths = fetch_authorities(&api)?;
 		let current_hash = hash_authorities(&auths);
@@ -1023,6 +1135,9 @@ fn run(common: CommonArgs) -> anyhow::Result<()> {
 
 			let mut rows: Vec<(String, String)> = Vec::new();
 			rows.push(("author".to_string(), colors.author(&author_hex)));
+
+				// NOTE: `--show-next-active-set` is intentionally disabled for now because the target
+				// runtime does not expose the necessary Session storage items.
 
 			if let (Some(sc), Some(http)) = (sidechain_pubkey.as_deref(), ariadne_client.as_ref()) {
 				let status = jsonrpc_http_call(
