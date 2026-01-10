@@ -45,6 +45,15 @@ struct CommonArgs {
 	    keystore_path: String,
 		    #[arg(long, default_value_t = 1200)]
 		    epoch_size: u32,
+	/// Output schedule JSON to stdout (requires --current or --next; cannot be used with --watch)
+	#[arg(long, conflicts_with = "watch")]
+	output_json: bool,
+	/// Output the current epoch schedule (requires --output-json)
+	#[arg(long, requires = "output_json", conflicts_with = "next")]
+	current: bool,
+	/// Output the next epoch schedule (requires --output-json)
+	#[arg(long, requires = "output_json", conflicts_with = "current")]
+	next: bool,
 		    /// Output language for fixed messages: ja|en
 		    #[arg(long, value_enum, default_value = "en")]
 		    lang: Lang,
@@ -1720,29 +1729,16 @@ fn run(common: CommonArgs) -> anyhow::Result<()> {
 	let colors = Colors::new(common.color);
 	let is_tty = std::io::stdout().is_terminal();
 	let live_update = common.watch && is_tty;
-	let banner = format!(
-		"\n Midnight-blocklog - {}: {}\n--------------------------------------------------------------\n",
-		i18n.pick("Version", "バージョン"),
-		env!("CARGO_PKG_VERSION")
-	);
-	print!("{banner}");
-				let mut conn = if common.no_store {
-					None
-				} else {
-				let conn = Connection::open(&common.db)?;
-				ensure_db(&conn)?;
-				Some(conn)
-			};
 	let author_hex =
 		detect_aura_pubkey_from_keystore(Path::new(&common.keystore_path))?;
 	let author_bytes =
 		parse_pubkey_hex(&author_hex).map_err(|e| anyhow!("invalid aura pubkey from keystore: {e}"))?;
-	let sidechain_pubkey = if common.no_registration_check {
+	let sidechain_pubkey = if common.no_registration_check || common.output_json {
 		None
 	} else {
 		Some(detect_sidechain_pubkey_from_keystore(Path::new(&common.keystore_path))?)
 	};
-	let ariadne_client = if common.no_registration_check {
+	let ariadne_client = if common.no_registration_check || common.output_json {
 		None
 	} else {
 		Some(
@@ -1769,6 +1765,88 @@ fn run(common: CommonArgs) -> anyhow::Result<()> {
 	}
 
 	let epoch_size = common.epoch_size as u64;
+
+	if common.output_json {
+		if common.current == common.next {
+			return Err(anyhow!("--output-json requires exactly one of --current or --next"));
+		}
+
+		let auths = fetch_authorities(&api)?;
+		let slot_dur_ms: u64 = api
+			.get_constant("Aura", "SlotDuration")
+			.map_err(|e| anyhow!("{e:?}"))?;
+		let ts_ms: u64 = api
+			.get_storage("Timestamp", "Now", None)
+			.map_err(|e| anyhow!("{e:?}"))?
+			.unwrap_or(0);
+		let best_hash = api
+			.get_block_hash(None)
+			.map_err(|e| anyhow!("{e:?}"))?
+			.ok_or_else(|| anyhow!("no best head"))?;
+		let best_header = api
+			.get_header(Some(best_hash))
+			.map_err(|e| anyhow!("{e:?}"))?
+			.ok_or_else(|| anyhow!("no best header"))?;
+		let latest_slot =
+			aura_slot_from_header(&best_header).unwrap_or_else(|| ts_ms / slot_dur_ms.max(1));
+		let epoch_idx = latest_slot / epoch_size;
+
+		let (epoch, schedule_slots): (u64, Vec<u64>) = if common.next {
+			let next_start_slot = (epoch_idx + 1) * epoch_size;
+			match fetch_committee_info(&api, "SessionCommitteeManagement", "NextCommittee") {
+				Ok(Some((next_epoch, schedule))) => {
+					let mut my: Vec<u64> = Vec::new();
+					for (i, (aura, _grandpa)) in schedule.iter().enumerate() {
+						if aura == &author_bytes {
+							my.push(next_start_slot + (i as u64));
+						}
+					}
+					(next_epoch, my)
+				}
+				_ => {
+					let my = compute_my_slots(&auths, &author_bytes, next_start_slot, epoch_size);
+					(epoch_idx + 1, my)
+				}
+			}
+		} else {
+			let start_slot = epoch_idx * epoch_size;
+			let my = compute_my_slots(&auths, &author_bytes, start_slot, epoch_size);
+			(epoch_idx, my)
+		};
+
+		let schedule = schedule_slots
+			.iter()
+			.map(|slot| {
+				let delta_slots = *slot as i64 - latest_slot as i64;
+				let ts = ts_ms as i64 + (delta_slots * slot_dur_ms as i64);
+				serde_json::json!({
+					"slot": slot,
+					"date": format_ts(ts, &out_tz),
+				})
+			})
+			.collect::<Vec<_>>();
+
+		let v = serde_json::json!({
+			"epoch": epoch,
+			"schedule": schedule,
+		});
+		println!("{}", serde_json::to_string_pretty(&v)?);
+		return Ok(());
+	}
+
+	let banner = format!(
+		"\n Midnight-blocklog - {}: {}\n--------------------------------------------------------------\n",
+		i18n.pick("Version", "バージョン"),
+		env!("CARGO_PKG_VERSION")
+	);
+	print!("{banner}");
+	let mut conn = if common.no_store {
+		None
+	} else {
+		let conn = Connection::open(&common.db)?;
+		ensure_db(&conn)?;
+		Some(conn)
+	};
 
 	let mut prev_hash: Option<[u8; 32]> = None;
 	let mut prev_len: usize = 0;
