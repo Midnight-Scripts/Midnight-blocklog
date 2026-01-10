@@ -146,6 +146,9 @@ Options are provided per subcommand.
 - `--ariadne-insecure`: Accept invalid TLS certs for Ariadne endpoint (optional)
 - `--no-registration-check`: Disable sidechain registration check (optional)
 - `--watch`: Continuous monitoring (optional; keeps running without exiting)
+- `--output-json`: Output schedule JSON to stdout (optional; cannot be used with `--watch`; exits after printing)
+- `--current`: Output the current epoch schedule (requires `--output-json`)
+- `--next`: Output the next epoch schedule (requires `--output-json`)
 
 ### `mblog log`
 
@@ -154,6 +157,33 @@ Options are provided per subcommand.
 - `--tz <TZ>`: Scheduled time timezone (optional; default: `UTC`)
 
 See `mblog block --help` and `mblog log --help` for the authoritative list.
+
+### JSON schedule output (stdout)
+
+When `--output-json` is set (instead of `--watch`), `mblog` prints the schedule as JSON to stdout (`date` respects `--tz`) and exits.  
+Note: `--output-json` does not write to SQLite (it ignores `--db` and does not create/update the DB).
+
+Examples:
+
+```bash
+# Current epoch schedule as JSON (date respects --tz)
+mblog block --keystore-path /path/to/keystore --tz UTC --output-json --current
+
+# Next epoch schedule as JSON (date respects --tz)
+mblog block --keystore-path /path/to/keystore --tz UTC --output-json --next
+```
+
+Sample output:
+
+```json
+{
+  "epoch": 245555,
+  "schedule": [
+    { "slot": 294663162, "date": "2026-01-10T12:34:56Z" }
+  ]
+}
+```
+
 
 ## What is stored in SQLite
 The data stored in SQLite is continuously updated by running this application with `mblog watch`.
@@ -291,6 +321,9 @@ mblog --help
 - `--ariadne-insecure`: Ariadne の TLS 証明書検証をスキップ（自己署名向け; 省略可能）
 - `--no-registration-check`: サイドチェーン登録チェックを無効化（省略可能）
 - `--watch`: 常時監視（省略可能、終了せずに動作し続ける）
+- `--output-json`: スケジュールを JSON で stdout に出力（省略可能、`--watch` と併用不可、出力後に終了）
+- `--current`: 現在 epoch のスケジュールを出力（`--output-json` 必須）
+- `--next`: 次 epoch のスケジュールを出力（`--output-json` 必須）
 
 ### `mblog log`
 
@@ -354,6 +387,33 @@ epoch: 245528
 | 2 | finality | 3238966      | 294633843 | 243           | 2026-01-07T20:24:18+04:00 | 0x63ec2189...c0776574 |
 |===|==========|==============|===========|===============|===========================|=======================|
 ```
+
+### 4) スケジュールをJSONで出力（stdout）
+
+`--watch` の代わりに `--output-json` を指定すると、スケジュールを JSON で標準出力に出力し（`date` は `--tz` を反映）、出力後に終了します。  
+注意: `--output-json` は SQLite には書き込みません（`--db` は無視され、DBの作成/更新も行いません）
+
+
+```bash
+# 現在 epoch のスケジュールを JSON 出力
+mblog block --keystore-path /path/to/your/keystore --tz UTC --output-json --current
+
+# 次 epoch のスケジュールを JSON 出力
+mblog block --keystore-path /path/to/your/keystore --tz UTC --output-json --next
+```
+
+出力例:
+
+```json
+{
+  "epoch": 245555,
+  "schedule": [
+    { "slot": 294663162, "date": "2026-01-10T12:34:56Z" }
+  ]
+}
+```
+
+
 
 
 ## SQLite に保存する内容
