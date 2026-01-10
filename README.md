@@ -72,6 +72,39 @@ Commands:
   log    Show stored blocks from SQLite
 ```
 
+## Options
+
+Options are provided per subcommand.
+
+### `mblog block`
+
+- `--ws <WS>`: WS RPC endpoint (optional; default: `ws://127.0.0.1:9944`)
+- `--keystore-path <KEYSTORE_PATH>`: Node keystore directory (required)
+- `--epoch-size <EPOCH_SIZE>`: Number of slots per epoch (optional; default: `1200`)
+- `--lang <LANG>`: Language for fixed messages (optional; `ja` | `en`; default: `en`)
+- `--tz <TZ>`: Output timezone (optional; default: `UTC`)
+  - `UTC` / `local` / `+HH:MM` / `-HH:MM`
+  - Unix only: IANA timezones such as `Asia/Tokyo` (sets `TZ` internally and uses system tzdata)
+- `--color <auto|always|never>`: Colored output (optional; default: `auto`)
+- `--db <DB>`: SQLite DB path (optional; default: `./mblog.db`)
+- `--no-store`: Do not write to SQLite (optional; logs only; `--db` path is not required)
+- `--ariadne-endpoint <ARIADNE_ENDPOINT>`: Ariadne JSON-RPC endpoint used for sidechain registration checks (optional; default: `https://rpc.testnet-02.midnight.network`)
+- `--ariadne-insecure`: Accept invalid TLS certs for Ariadne endpoint (optional)
+- `--no-registration-check`: Disable sidechain registration check (optional)
+- `--watch`: Continuous monitoring (optional; keeps running without exiting)
+- `--output-json`: Output schedule JSON to stdout (optional; cannot be used with `--watch`; exits after printing)
+- `--current`: Output the current epoch schedule (requires `--output-json`)
+- `--next`: Output the next epoch schedule (requires `--output-json`)
+
+### `mblog log`
+
+- `--db <DB>`: SQLite DB path (optional; default: `./mblog.db`)
+- `--epoch <EPOCH>`: Epoch number to display (optional; default: latest)
+- `--tz <TZ>`: Scheduled time timezone (optional; default: `UTC`)
+
+See `mblog block --help` and `mblog log --help` for the authoritative list.
+
+
 ### 2) Schedule DB Save, Display Time Zone, Enable Monitoring Mode
 
 ```bash
@@ -102,7 +135,33 @@ progress [============================= ] 99% (slot 294633599/294633599)
 >If there is no schedule, it will display `No schedule for this session`.
 
 
-### 3) Show stored blocks (SQLite)
+### 3) JSON schedule output (stdout)
+
+When `--output-json` is set (instead of `--watch`), `mblog` prints the schedule as JSON to stdout (`date` respects `--tz`) and exits.  
+Note: `--output-json` does not write to SQLite (it ignores `--db` and does not create/update the DB).
+
+Examples:
+
+```bash
+# Current epoch schedule as JSON (date respects --tz)
+mblog block --keystore-path /path/to/keystore --tz UTC --output-json --current
+
+# Next epoch schedule as JSON (date respects --tz)
+mblog block --keystore-path /path/to/keystore --tz UTC --output-json --next
+```
+
+Sample output:
+
+```json
+{
+  "epoch": 245555,
+  "schedule": [
+    { "slot": 294663162, "date": "2026-01-10T12:34:56Z" }
+  ]
+}
+```
+
+### 4) Show stored blocks (SQLite)
 
 ```bash
 # Latest epoch (default)
@@ -126,34 +185,6 @@ epoch: 245528
 |===|==========|==============|===========|===============|===========================|=======================|
 ```
 
-## Options
-
-Options are provided per subcommand.
-
-### `mblog block`
-
-- `--ws <WS>`: WS RPC endpoint (optional; default: `ws://127.0.0.1:9944`)
-- `--keystore-path <KEYSTORE_PATH>`: Node keystore directory (required)
-- `--epoch-size <EPOCH_SIZE>`: Number of slots per epoch (optional; default: `1200`)
-- `--lang <LANG>`: Language for fixed messages (optional; `ja` | `en`; default: `en`)
-- `--tz <TZ>`: Output timezone (optional; default: `UTC`)
-  - `UTC` / `local` / `+HH:MM` / `-HH:MM`
-  - Unix only: IANA timezones such as `Asia/Tokyo` (sets `TZ` internally and uses system tzdata)
-- `--color <auto|always|never>`: Colored output (optional; default: `auto`)
-- `--db <DB>`: SQLite DB path (optional; default: `./mblog.db`)
-- `--no-store`: Do not write to SQLite (optional; logs only; `--db` path is not required)
-- `--ariadne-endpoint <ARIADNE_ENDPOINT>`: Ariadne JSON-RPC endpoint used for sidechain registration checks (optional; default: `https://rpc.testnet-02.midnight.network`)
-- `--ariadne-insecure`: Accept invalid TLS certs for Ariadne endpoint (optional)
-- `--no-registration-check`: Disable sidechain registration check (optional)
-- `--watch`: Continuous monitoring (optional; keeps running without exiting)
-
-### `mblog log`
-
-- `--db <DB>`: SQLite DB path (optional; default: `./mblog.db`)
-- `--epoch <EPOCH>`: Epoch number to display (optional; default: latest)
-- `--tz <TZ>`: Scheduled time timezone (optional; default: `UTC`)
-
-See `mblog block --help` and `mblog log --help` for the authoritative list.
 
 ## What is stored in SQLite
 The data stored in SQLite is continuously updated by running this application with `mblog watch`.
@@ -291,6 +322,9 @@ mblog --help
 - `--ariadne-insecure`: Ariadne の TLS 証明書検証をスキップ（自己署名向け; 省略可能）
 - `--no-registration-check`: サイドチェーン登録チェックを無効化（省略可能）
 - `--watch`: 常時監視（省略可能、終了せずに動作し続ける）
+- `--output-json`: スケジュールを JSON で stdout に出力（省略可能、`--watch` と併用不可、出力後に終了）
+- `--current`: 現在 epoch のスケジュールを出力（`--output-json` 必須）
+- `--next`: 次 epoch のスケジュールを出力（`--output-json` 必須）
 
 ### `mblog log`
 
@@ -331,7 +365,32 @@ progress [============================= ] 99% (slot 294633599/294633599)
 > スケジュールがない場合は `このセッションにスケジュールはありません`と表示されます。
 
 
-### 3) blocks 表示（SQLite）
+### 3) スケジュールをJSONで出力（stdout）
+
+`--watch` の代わりに `--output-json` を指定すると、スケジュールを JSON で標準出力に出力し（`date` は `--tz` を反映）、出力後に終了します。  
+注意: `--output-json` は SQLite には書き込みません（`--db` は無視され、DBの作成/更新も行いません）
+
+
+```bash
+# 現在 epoch のスケジュールを JSON 出力
+mblog block --keystore-path /path/to/your/keystore --tz UTC --output-json --current
+
+# 次 epoch のスケジュールを JSON 出力
+mblog block --keystore-path /path/to/your/keystore --tz UTC --output-json --next
+```
+
+出力例:
+
+```json
+{
+  "epoch": 245555,
+  "schedule": [
+    { "slot": 294663162, "date": "2026-01-10T12:34:56Z" }
+  ]
+}
+```
+
+### 4) blocks 表示（SQLite）
 
 ```bash
 # 最新の epoch（デフォルト）
