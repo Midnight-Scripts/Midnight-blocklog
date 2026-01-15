@@ -46,7 +46,7 @@ sudo apt-get install -y build-essential pkg-config libssl-dev
 ## Install (clone this repository and run `cargo install`)
 
 ```bash
-git clone https://github.com/btbf/Midnight-blocklog.git
+git clone https://github.com/Midnight-Scripts/Midnight-blocklog.git
 cd Midnight-blocklog
 git checkout <latest_tag_name>
 cargo install --path . --bin mblog --locked --force
